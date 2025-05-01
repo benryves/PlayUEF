@@ -71,6 +71,10 @@ function uef2wave (uefData, baud, sampleRate, stopPulses, phase, carrierFactor, 
         uefChunks.push({type:"dataBlock", header:header, data:UEFchunk.data, cycles:10*UEFchunk.data.length});
         blockNumber++;
         break;
+        
+        case 0x0102: // explicitDataBlock
+        uefChunks.push({type:"explicitDataBlock", data:UEFchunk.data.slice(1), cycles:(UEFchunk.data.length*8)-UEFchunk.data[0]});
+        break;
 
         case 0x0104: // definedDataBlock
         var data = UEFchunk.data.slice(3);
@@ -211,6 +215,20 @@ function uef2wave (uefData, baud, sampleRate, stopPulses, phase, carrierFactor, 
         writeDefinedByte(chunk.data[i], chunk.format);
       }
     }
+    
+    // Write explicit format data bits
+    var writeExplicitBlock = function(chunk) {
+      var b = 0;
+      var byte = 0;
+      while (b < chunk.cycles) {
+        if ((b % 8) == 0) {
+          byte = chunk.data[b / 8];
+        }
+        writeBit(byte & 1);
+        byte >>= 1;
+        ++b;
+      }
+    }
 
     // Write carrier tone
     var writeTone = function(chunk) {
@@ -227,7 +245,8 @@ function uef2wave (uefData, baud, sampleRate, stopPulses, phase, carrierFactor, 
       integerGap:         writeGap,
       carrierTone:        writeTone,
       dataBlock:          writeStandardBlock,
-      definedDataBlock:   writeDefinedBlock
+      definedDataBlock:   writeDefinedBlock,
+      explicitDataBlock:  writeExplicitBlock
     }
 
     var uefCycles = 0

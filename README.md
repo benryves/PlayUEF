@@ -81,14 +81,15 @@ See the [UEF specification draft](/docs/UEFspecification.html) for more details.
 
 Fully implemented UEF chunks
 * `0x0100` Implicit start/stop bit tape data block
+* `0x0102` Explicit data block
+* `0x0104` Defined data block (for Acorn Atom and BBC titles like AndroidAttack & Joust)
 * `0x0110` Carrier tone
-* `0x1111` Carrier tone with dummy byte at byte
+* `0x0111` Carrier tone with dummy byte at byte
 * `0x0112` Integer gap
-* `0x0104` defined data block (for Acorn Atom and BBC titles like AndroidAttack & Joust)
 
 Approximated
 
-* `0x0116` - floating point gap is approximated to interger gap
+* `0x0116` - floating point gap is approximated to integer gap
 * `0x0114` - security cycles replaced with carrier tone
 
 Ignored
