@@ -86,15 +86,15 @@ Fully implemented UEF chunks
 * `0x0110` Carrier tone
 * `0x0111` Carrier tone with dummy byte at byte
 * `0x0112` Integer gap
+* `0x0113` Change of base frequency
+* `0x0115` Phase change
+* `0x0117` Data format change
 
 Approximated
 
-* `0x0116` - floating point gap is approximated to integer gap
-* `0x0114` - security cycles replaced with carrier tone
+* `0x0116` Floating point gap is approximated to integer gap
+* `0x0114` Security cycles replaced with carrier tone
 
-Ignored
-* `0x0113` Change of base frequency
-* `0x0115` Phase change
 
 These seem to usually reflect mechanical variance of original cassette player behavior. As we just want to load game data rather than recreate archival quality audio, these are ignored.
 

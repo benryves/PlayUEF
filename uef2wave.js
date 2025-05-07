@@ -24,11 +24,63 @@ function uef2wave (uefData, baud, sampleRate, stopPulses, phase, carrierFactor, 
   }
 
   // Create mini-samples of audio bit encoding
-  const carrier = generateTone("carrier", baud*2,2,phase, sampleRate);
-  const bit0    = generateTone("bit0   ", baud,1,phase, sampleRate);
-  const bit1    = generateTone("bit1   ", highBitFreq,2,phase, sampleRate);
-  //const stopbit = generateTone("stopbit", baud*2,stopPulses/2,phase, sampleRate);
-  const highwave= generateTone(null, baud*2,1,phase, sampleRate);
+  var carrier, bit0, bit1, highwave;
+  
+  var samplesPerCycle; // Audio samples per base cycle
+  var bitRepeat = 1; // How many times to repeat each data bit
+  
+  var initialBaud = baud, initialPhase = phase, initialHighBitFreq = highBitFreq; // Remember initial state to allow reset between passes
+  
+  var generateSamples = function() {
+    carrier = generateTone("carrier", baud*2,2*bitRepeat,phase, sampleRate);
+    bit0    = generateTone("bit0   ", baud,1*bitRepeat,phase, sampleRate);
+    bit1    = generateTone("bit1   ", highBitFreq,2*bitRepeat,phase, sampleRate);
+    highwave= generateTone(null, baud*2,1,phase, sampleRate);
+    samplesPerCycle = Math.floor(sampleRate * bitRepeat / baud);
+  };
+  
+  var resetGenerateSamples = function() {
+    baud = initialBaud;
+    phase = initialPhase;
+    highBitFreq = initialHighBitFreq;
+    generateSamples();
+  };
+  resetGenerateSamples();
+  
+  var changeFrequency = function(chunk) {
+    if (chunk.frequency != baud) {
+      baud = chunk.frequency;
+      highBitFreq = chunk.frequency * 2;
+      generateSamples();
+    }
+    return chunk;
+  }
+  
+  var changePhase = function(chunk) {
+    if (chunk.phase != phase) {
+      phase = chunk.phase;
+      generateSamples();
+    }
+    return chunk;
+  }
+  
+  var changeDataFormat = function(chunk) {
+    switch (chunk.format) {
+      case 300:
+        if (bitRepeat != 4) {
+          bitRepeat = 4;
+          generateSamples();
+        }
+        break;
+      case 1200:
+        if (bitRepeat != 1) {
+          bitRepeat = 1;
+          generateSamples();
+        }
+        break;
+    }
+    return chunk;
+  }
 
   var isValidUEF = function() {return ((String.fromCharCode.apply(null,uefData.slice(0, 9)) == "UEF File!"));}
 
@@ -45,12 +97,10 @@ function uef2wave (uefData, baud, sampleRate, stopPulses, phase, carrierFactor, 
 
   // TODO - Variables passed to decode and WAV creation
   var uefChunks      = [];
-  var samplesPerCycle= Math.floor(sampleRate / baud); // Audio samples per base cycle
   var uefPos         = 12; // skip over "UEF File!"
   var uefDataLength  = uefData.length;
   var parityInvert   = 0;
-  var uefCycles      = 0;
-
+  
   function decodeUEF(uefData){
     function decodeChunk(UEFchunk) {
       switch (UEFchunk.id){
@@ -68,44 +118,56 @@ function uef2wave (uefData, baud, sampleRate, stopPulses, phase, carrierFactor, 
         break;
         case 0x0100: // dataBlock
         var header = acornBlockInfo(UEFchunk.data);
-        uefChunks.push({type:"dataBlock", header:header, data:UEFchunk.data, cycles:10*UEFchunk.data.length});
+        uefChunks.push({type:"dataBlock", header:header, data:UEFchunk.data, cycles:10*UEFchunk.data.length, samplesPerCycle:samplesPerCycle});
         blockNumber++;
         break;
         
         case 0x0102: // explicitDataBlock
-        uefChunks.push({type:"explicitDataBlock", data:UEFchunk.data.slice(1), cycles:(UEFchunk.data.length*8)-UEFchunk.data[0]});
+        uefChunks.push({type:"explicitDataBlock", data:UEFchunk.data.slice(1), cycles:(UEFchunk.data.length*8)-UEFchunk.data[0], samplesPerCycle:samplesPerCycle});
         break;
 
         case 0x0104: // definedDataBlock
         var data = UEFchunk.data.slice(3);
         var format = {bits:UEFchunk.data[0], parity:chr(UEFchunk.data[1]), stopBits:UEFchunk.data[2]};
         var cycles = cyclesPerPacket(format)*data.length;
-        uefChunks.push({type:"definedDataBlock", format:format, header:"Defined format data chunk "+hex(blockNumber), data:data, cycles:cycles});
+        uefChunks.push({type:"definedDataBlock", format:format, header:"Defined format data chunk "+hex(blockNumber), data:data, cycles:cycles, samplesPerCycle:samplesPerCycle});
         blockNumber++;
         break;
 
         case 0x0110: // carrierTone
-        uefChunks.push({type:"carrierTone", cycles:carrierAdjust(wordAt(UEFchunk.data,0))});
+        uefChunks.push({type:"carrierTone", cycles:carrierAdjust(Math.ceil(wordAt(UEFchunk.data,0)/bitRepeat)), samplesPerCycle:samplesPerCycle});
         break;
 
         case 0x0112: // integerGap
         blockNumber = 0;
-        uefChunks.push({type:"integerGap", cycles:wordAt(UEFchunk.data,0)*2});
+        uefChunks.push({type:"integerGap", cycles:wordAt(UEFchunk.data,0)*2, samplesPerCycle:samplesPerCycle});
         break;
 
         case 0x0111: // carrierToneWithDummyByte
-        uefChunks.push({type:"carrierTone", cycles:wordAt(UEFchunk.data,0)}); // before cycles
-        uefChunks.push({type:"dataBlock",   data:[0xAA], cycles:10, header:""}); // Dummy Byte
-        uefChunks.push({type:"carrierTone", cycles:wordAt(UEFchunk.data,2)}); // after byte
+        uefChunks.push({type:"carrierTone", cycles:Math.ceil(wordAt(UEFchunk.data,0)/bitRepeat), samplesPerCycle:samplesPerCycle}); // before cycles
+        uefChunks.push({type:"dataBlock",   data:[0xAA], cycles:10, header:"", samplesPerCycle:samplesPerCycle}); // Dummy Byte
+        uefChunks.push({type:"carrierTone", cycles:Math.ceil(wordAt(UEFchunk.data,2)/bitRepeat), samplesPerCycle:samplesPerCycle}); // after byte
         break;
 
         case 0x0114: // securityCycles - REPLACED WITH CARRIER TONE
-        uefChunks.push({type:"carrierTone", cycles:(doubleAt(UEFchunk.data,0) & 0x00ffffff)});
+        uefChunks.push({type:"carrierTone", cycles:(Math.ceil(doubleAt(UEFchunk.data,0)/bitRepeat) & 0x00ffffff), samplesPerCycle:samplesPerCycle});
         break;
 
         case 0x0116: // floatingPointGap - APPROXIMATED
         blockNumber = 0;
-        uefChunks.push({type:"integerGap", cycles: carrierAdjust(Math.ceil(floatAt(UEFchunk.data,0) * baud))});
+        uefChunks.push({type:"integerGap", cycles: carrierAdjust(Math.ceil(floatAt(UEFchunk.data,0) * baud / bitRepeat)), samplesPerCycle:samplesPerCycle});
+        break;
+        
+        case 0x0113: // changeFrequency
+        uefChunks.push(changeFrequency({type:"changeFrequency", frequency:floatAt(UEFchunk.data,0)}));
+        break;
+        
+        case 0x0115: // changePhase
+        uefChunks.push(changePhase({type:"changePhase", phase:wordAt(UEFchunk.data,0)/180*Math.PI}));
+        break;
+        
+        case 0x0117: // changeDataFormat
+        uefChunks.push(changeDataFormat({type:"changeDataFormat", format:wordAt(UEFchunk.data,0)}));
         break;
       }
     }
@@ -237,7 +299,7 @@ function uef2wave (uefData, baud, sampleRate, stopPulses, phase, carrierFactor, 
 
     // Gap advances sample position pointer, assumes array is zero filled
     var writeGap = function(chunk) {
-      samplePos+= samplesPerCycle * chunk.cycles;
+      samplePos+= chunk.cycles * chunk.samplesPerCycle;
     }
 
     // Define functions to apply to uefChunk tokens
@@ -246,17 +308,29 @@ function uef2wave (uefData, baud, sampleRate, stopPulses, phase, carrierFactor, 
       carrierTone:        writeTone,
       dataBlock:          writeStandardBlock,
       definedDataBlock:   writeDefinedBlock,
-      explicitDataBlock:  writeExplicitBlock
+      explicitDataBlock:  writeExplicitBlock,
+      changeFrequency:    changeFrequency,
+      changePhase:        changePhase,
+      changeDataFormat:   changeDataFormat
     }
 
-    var uefCycles = 0
+    var uefCycles = 0, uefSamples = 0;
     var numChunks = uefChunks.length;
-
+    
+    resetGenerateSamples();
+    
     for (var i = 0; i < numChunks; i++) {
-      uefCycles += uefChunks[i].cycles;
+      if (typeof uefChunks[i].cycles == 'number') {
+        uefCycles += uefChunks[i].cycles;
+        if (typeof uefChunks[i].samplesPerCycle == 'number') {
+          uefSamples += uefChunks[i].cycles * uefChunks[i].samplesPerCycle;
+        }
+      }
     }
+    
+    resetGenerateSamples();
 
-    var estLength     = uefCycles * samplesPerCycle; // Estimate WAV length from UEF decode
+    var estLength     = uefSamples; // Estimate WAV length from UEF decode
     var waveBuffer    = new ArrayBuffer(44 + (estLength*2)); // Header is 44 bytes, sample is 16-bit * sampleLength
     var sampleData    = new Int16Array(waveBuffer, 44, estLength);
     var samplePos     = 0;
@@ -266,25 +340,23 @@ function uef2wave (uefData, baud, sampleRate, stopPulses, phase, carrierFactor, 
       var chunk = uefChunks[i];
       uefChunks[i].timestamp = samplePos; // Record start position in audio WAV, given in samples
       functions[chunk.type].apply(this, [chunk]);
-
+      
       // Array to string for console display
       if (uefChunks[i].data != null){
-
         var str = String.fromCharCode.apply(null,uefChunks[i].data);//
-          uefChunks[i].datastr = str.replace(re, ".");
-        }
-
+        uefChunks[i].datastr = str.replace(re, ".");
       }
 
-      console.log((Math.floor(10*samplePos/sampleRate)/10)+"s WAV audio at "+baud+" baud");
-      return new Uint8Array(buildWAVheader(waveBuffer, samplePos, sampleRate));
     }
+    console.log((Math.floor(10*samplePos/sampleRate)/10)+"s WAV audio at "+baud+" baud");
+    return new Uint8Array(buildWAVheader(waveBuffer, uefSamples, sampleRate));
+  }
 
-    console.time('Decode UEF');
-    var uefChunks = decodeUEF(uefData);
-    console.timeEnd('Decode UEF');
-    console.time('Create WAV');
-    var wavfile = createWAV(uefChunks);
-    console.timeEnd('Create WAV');
-    return {wav:wavfile, uef:uefChunks};
-  };
+  console.time('Decode UEF');
+  var uefChunks = decodeUEF(uefData);
+  console.timeEnd('Decode UEF');
+  console.time('Create WAV');
+  var wavfile = createWAV(uefChunks);
+  console.timeEnd('Create WAV');
+  return {wav:wavfile, uef:uefChunks};
+};
